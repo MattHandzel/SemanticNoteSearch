@@ -3,7 +3,7 @@ import frontmatter
 from frontmatter import Post
 import logging
 import argparse
-import json
+import jison
 import re
 
 DEBUG = False
