@@ -52,6 +52,8 @@ main() {
 
     # Add any additional installation steps here
     echo "Installation completed successfully."
+
+    pip install -r requirements.txt
 }
 
 # Run the main function
