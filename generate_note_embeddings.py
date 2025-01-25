@@ -5,19 +5,17 @@ from qdrant_client.http.models import PointStruct
 from sentence_transformers import SentenceTransformer
 import os
 import dotenv
-from nlp_utils import clean_text_for_embedding_model
+
 
 dotenv.load_dotenv()
 COLLECTION_NAME = os.getenv("COLLECTION_NAME")
-MODEL_NAME = os.getenv("MODEL_NAME")
-print("COLLECTION_NAME is", COLLECTION_NAME)
+MODEL_NAME = "all-mpnet-base-v2"
 
 
 def init_vector_db():
     client = QdrantClient("http://localhost:6333")
     model = SentenceTransformer(MODEL_NAME)
 
-    print(client.get_collections().collections)
     if not any(
         [c.name == COLLECTION_NAME for c in client.get_collections().collections]
     ):
@@ -94,17 +92,33 @@ def query_notes(query):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("root_directory", type=str)
-    parser.add_argument("--query", type=str, help="Query to search for similar notes")
-    args = parser.parse_args()
-    root_directory = args.root_directory
 
-    if args.query:
-        query_notes(args.query)
-    else:
-        loop_through_notes(
-            root_directory,
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--directories",
+        nargs="+",
+        type=str,
+        help="List of directories to process",
+        default=[],
+        required=False,
+    )
+    parser.add_argument(
+        "--files",
+        nargs="+",
+        type=str,
+        help="List of files to process",
+        required=False,
+        default=[],
+    )
+    args = parser.parse_args()
+
+    for directory in args.directories:
+        loop_through_directories(
+            directory,
             [embed_all_notes_into_vector_database],
             clear_bottom_matter=False,
+        )
+    for file in args.files:
+        process_note(
+            file, "", [embed_all_notes_into_vector_database], clear_bottom_matter=False
         )

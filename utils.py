@@ -4,9 +4,8 @@ from frontmatter import Post
 import logging
 import argparse
 import json
-import ollama
+import re
 
-OLLAMA_NUM_THREADS = 15
 DEBUG = False
 INT_MAX = int(2**63)
 note_extensions = [".md"]
@@ -140,6 +139,50 @@ def loop_through_notes(
         num_notes_processed += 1
 
 
+def process_note(note, root_directory, functions, clear_bottom_matter=False):
+    raw_content = read_note(note)
+
+    if len(raw_content) == 0:
+        return  # empyt note
+
+    meta_data, content = parse_note(raw_content)
+
+    bottom_matter_data = {}
+
+    if clear_bottom_matter:
+        content = remove_bottom_matter(content)
+
+    content_was_updated = False
+    for function in functions:
+        new_bottom_matter_data, new_content, did_update_content = function(
+            note, meta_data, content, root_directory
+        )
+        if new_bottom_matter_data:
+            bottom_matter_data.update(new_bottom_matter_data)
+
+        if did_update_content:
+            content_was_updated = True
+            content = new_content
+
+    if bottom_matter_data and bottom_matter_data != {}:
+        content = update_bottom_matter(content, bottom_matter_data)
+
+    try:
+        if not content_was_updated and bottom_matter_data == {}:
+            return
+        with open(note, "w") as f:
+            if meta_data is {} or len(meta_data) == 0 or meta_data is None:
+                f.write(content)
+            else:
+                f.write(frontmatter.dumps(Post(content, **meta_data)))
+
+    except Exception as e:
+        logger.error(f"Error writing to file {note}: {e}")
+        # Replace with old content
+        with open(note, "w") as f:
+            f.write(raw_content)
+
+
 def loop_through_directories(
     root_directory, functions, max_notes=INT_MAX, clear_bottom_matter=False
 ):
@@ -150,61 +193,39 @@ def loop_through_directories(
         if num_notes_processed >= max_notes:
             return
 
-        raw_content = read_note(note)
-        if len(raw_content) == 0:
-            continue  # empyt note
-        meta_data, content = parse_note(raw_content)
-
-        bottom_matter_data = {}
-
-        if clear_bottom_matter:
-            content = remove_bottom_matter(content)
-
-        content_was_updated = False
-        for function in functions:
-            new_bottom_matter_data, new_content, did_update_content = function(
-                note, meta_data, content, root_directory
-            )
-            if new_bottom_matter_data:
-                bottom_matter_data.update(new_bottom_matter_data)
-
-            if did_update_content:
-                content_was_updated = True
-                content = new_content
-
-        if bottom_matter_data and bottom_matter_data != {}:
-            content = update_bottom_matter(content, bottom_matter_data)
-
-        try:
-            if not content_was_updated and bottom_matter_data == {}:
-                continue
-            with open(note, "w") as f:
-                if meta_data is {} or len(meta_data) == 0 or meta_data is None:
-                    f.write(content)
-                else:
-                    f.write(frontmatter.dumps(Post(content, **meta_data)))
-
-        except Exception as e:
-            logger.error(f"Error writing to file {note}: {e}")
-            # Replace with old content
-            with open(note, "w") as f:
-                f.write(raw_content)
+        process_note(note, root_directory, functions, clear_bottom_matter)
         num_notes_processed += 1
 
 
-# Get extra data
-
-
-def query_ollama(user_message, system_message, model_name="llama3.2"):
-
-    logger.info("--------\n" + system_message + "\n--------\n")
-
-    response = ollama.chat(
-        model=model_name,
-        messages=[
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": user_message},
-        ],
-        options={"num_thread": OLLAMA_NUM_THREADS},
+def clean_custom_patterns(text):
+    # TODO: Thoroughly test these
+    # Replace: email, phone, youtube link, regular link  with [email], [phone], [youtube], [link]
+    clean_text = re.sub(  # email
+        r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", "<EMAIL>", text
     )
-    return response["message"]["content"].strip()
+    clean_text = re.sub(  # phone
+        r"(\d{3}[-\.\s]??\d{3}[-\.\s]??\d{4}|\(\d{3}\)\s*\d{3}[-\.\s]??\d{4}|\d{3}[-\.\s]??\d{4})",
+        "<PHONE>",
+        clean_text,
+    )
+    # clean_text = re.sub(  # youtube link
+    #     r"(https?:\/\/)?(www\.)?(youtube\.com|youtu\.?be)\/.+", "", clean_text
+    # )
+    clean_text = re.sub(  # regular link
+        r"(http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+)",
+        "<URL>",
+        clean_text,
+    )
+
+    return clean_text
+
+
+def normalize_whitespace(text):
+    lines = text.split("\n")
+    normalized_lines = [" ".join(line.split()) for line in lines]
+    return "\n".join(normalized_lines)
+
+
+def clean_text_for_embedding_model(text):
+
+    return clean_custom_patterns(normalize_whitespace(text))
